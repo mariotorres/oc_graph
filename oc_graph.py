@@ -8,11 +8,11 @@ client = MongoClient('localhost',27017)
 
 db = client.dataton2019
 buyers = db.buyers
-tenderers = db.tenderers
+parties = db.tenderers
 ocds_data = db.cp # db.contrataciones
 
 
-def add_party(tx, party, roles):
+def add_party(tx, party, type):
     '''
     #pprint(party.get('id'))
     pid = party.get('id')
@@ -32,34 +32,46 @@ def add_party(tx, party, roles):
     pid = pid.replace('{', '')
     '''
 
-    if roles == 'buyer':
+    if type == 'buyer':
         try:
-            query = "CREATE (b:Buyer {id:$id, name:$name, roles:$roles})"
-            tx.run(query, id= party.get('id'), name= party.get('name'), roles = roles)
+            query = "CREATE (b:Buyer {id:$id, name:$name})"
+            tx.run(query, id= party.get('id'), name= party.get('name'))
         except:
             pprint(party)
     else:
         try:
-            query = "CREATE (p:Party {id:$id, name:$name, roles:$roles})"
-            tx.run(query, id= party.get('id'), name= party.get('name') ,roles = roles)
+            query = "CREATE (p:Party {id:$id, name:$name})"
+            tx.run(query, id= party.get('id'), name= party.get('name'))
         except:
             pprint(party)
 
 def add_cp(tx, cp):
     ocid = cp.get('ocid')
 
+    # contracts data
+    contracts_data = cp.get('contracts',None)
+    contracts = []
+    total_amount = 0
+
+    if contracts_data is not None:
+        for c in contracts_data:
+            total_amount += c['value']['amount']
+            contracts.append(c['value']['amount'])
+    else:
+        pprint('No contacts data -> '+ cp['ocid'])
+
+    # create node
     try:
-        # create node
-        query = "CREATE (cp:CP { ocid: $ocid, title: $title, procurementMethod: $pm})"
-        tx.run(query, ocid = cp.get('ocid'), title = cp['tender']['title'], pm = cp['tender']['procurementMethod'])
+        query = "CREATE (cp:CP { ocid: $ocid, title: $title, procurementMethod: $pm, totalAmount: $total_amount, contracts: $contracts})"
+        tx.run(query, ocid = cp.get('ocid'), title = cp['tender']['title'], pm = cp['tender']['procurementMethod'], total_amount= total_amount, contracts= contracts)
     except:
         pprint(cp.get('ocid'))
 
     # create relations
     buyer_id = cp['buyer']['id']
     query= "MATCH(b:Buyer {id: $buyer_id}), (cp:CP {ocid: $ocid}) " \
-           "CREATE (b)-[:BOUGHT]->(cp)"
-    tx.run(query, buyer_id=buyer_id, ocid = ocid)
+           "CREATE (b)-[:BOUGHT {roles: $roles}]->(cp)"
+    tx.run(query, buyer_id=buyer_id, ocid = ocid, roles= ["buyer"])
 
     parties = cp.get('parties')
     for p in parties:
@@ -67,8 +79,8 @@ def add_cp(tx, cp):
             try:
                 #pprint (ocid + ' -> '+ p.get('id'))
                 query = "MATCH(p:Party {id: $party_id }), (cp: CP {ocid: $ocid}) " \
-                        "CREATE (p)-[:PARTICIPATED]->(cp)"
-                tx.run(query, party_id=p.get('id'), ocid=ocid)
+                        "CREATE (p)-[:PARTICIPATED {roles: $roles }]->(cp)"
+                tx.run(query, party_id=p.get('id'), ocid=ocid, roles = p.get('roles'))
             except:
                 pprint(p)
 
@@ -78,12 +90,15 @@ with driver.session() as session:
     for b in buyers.find({}):
             session.write_transaction(add_party, b, 'buyer')
 
-    for t in tenderers.find({}):
-            session.write_transaction(add_party, t, 'tenderer')
+    for p in parties.find({}):
+            session.write_transaction(add_party, p, 'party')
 
-    for cp in ocds_data.find({}):
+    cursor = ocds_data.find({}, no_cursor_timeout=True)
+
+    for cp in cursor:
         session.write_transaction(add_cp, cp)
 
+    cursor.close()
 
 session.close()
 client.close()
