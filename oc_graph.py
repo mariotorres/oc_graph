@@ -93,12 +93,11 @@ with driver.session() as session:
     for p in parties.find({}):
             session.write_transaction(add_party, p, 'party')
 
-    cursor = ocds_data.find({}, no_cursor_timeout=True)
+    cursor = ocds_data.find({}) #.skip(226687)
+    cursor.batch_size(10)
 
     for cp in cursor:
         session.write_transaction(add_cp, cp)
-
-    cursor.close()
 
 session.close()
 client.close()
